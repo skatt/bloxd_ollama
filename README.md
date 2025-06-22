@@ -1,111 +1,179 @@
-# 🧠 Bloxd.io + Ollama AI Integration
+# 🧠 Bloxd Ollama Integration
 
-This project allows an **Ollama LLM** to act as a **command-style controller** for a player inside Bloxd.io. It uses a local Node.js server to mediate communication between the Bloxd modding API and your LLM.
-
----
-
-## ⚙️ Components
-
-### 1. `ollama_controller_server.js`
-This file contains the **Ollama bridge server** and must be run on a local or remote machine with access to your Ollama backend.
-
-#### 🔧 Server Setup Instructions
-The full instructions for setup, authentication, remote exposure, and testing are **embedded as comments inside the `ollama_controller_server.js` file**.
-
-In summary:
-- You install dependencies (`express`, `dotenv`, `ollama`, etc.)
-- You run a local Ollama server (`ollama serve`)
-- You expose your server using `ngrok`
-- You secure access via a shared token in `.env`
+This setup allows you to connect [Bloxd.io](https://bloxd.io) to a local [Ollama](https://ollama.com) AI model using a **WebSocket proxy**, a **browser injection script**, and a **client mod** that interfaces directly with in-game chat and state.
 
 ---
 
-### 2. `bloxd_ollama_client.js`
-This is the script you paste into your **Bloxd.io client modding interface**. It listens for `/ai` chat commands and passes player context and instructions to the Ollama bridge. The AI responds with structured `{ action, args }` objects, which are executed in-game.
+## 📦 Overview
 
-Commands supported include:
-- `go` (move direction/speed)
-- `say` (chat in world)
-- `teleport` (to xyz)
-- `build` (place block at xyz)
-- `attack` (target player)
-- `idle` (no-op)
+`ollama_controller_server.js` Intercepts browser <--> Bloxd WebSocket and routes `/ai` commands to Ollama
+`bloxd_tamper.js` Injects browser override to connect to the proxy instead of directly to Bloxd
+`bloxd_ollama_client.js` Mod script inside Bloxd that listens to player input and sends it to Ollama
 
 ---
 
-## 🧠 How It Works
+## 🧰 Requirements
 
-The AI receives a full state description:
-```json
-{
-  "instruction": "...",
-  "message": "say hello",
-  "state": {
-    "player": { ... },
-    "nearbyPlayers": [ ... ],
-    "nearbyBlocks": [ ... ]
-  }
-}
-```
-The response must be in this format:
-```
-{ "action": "say", "args": { "message": "Hello!" } }
-```
-The client translates and executes this immediately.
+- Node.js (>=18)
+- [Ollama](https://ollama.com) installed and running locally (`ollama serve`)
+- Tampermonkey browser extension
+- Access to [Bloxd.io](https://bloxd.io)
+- Optionally, ngrok (for remote Ollama access, not needed if local)
+
+---
+
+## 🚀 Setup Guide
+
+### 1. Install Node Modules
+
+```bash
+npm install ws http ollama
 
 
 ---
 
-🚀 Expansion Path: Multi-Player Strategy AI
+2. Start Ollama
 
-This system can be extended to coordinate multiple players or run AI agents across an entire match.
+Install and serve your model:
 
-🧩 Suggested Features:
+ollama run llama3
 
-Per-player memory context
-
-Store session history keyed by player ID for persistent personality or strategy.
+Leave it running in a terminal.
 
 
-Commander Model
+---
 
-Let one LLM instance give tactical commands to several players at once:
-```
-{ "commands": [
-  { "target": "playerA", "action": "go", "args": { "direction": "north" } },
-  { "target": "playerB", "action": "build", "args": { "x": 3, "y": 4, "z": 5, "block": "wall" } }
-]}
-```
+3. Run the WebSocket Proxy
 
-Squad-based AI Control
+Start the proxy server that intercepts all browser WebSocket traffic:
 
-Treat a group of players as a squad with shared goal and distribute tasks.
+node ollama_controller_server.js
+
+By default, this listens on:
+
+ws://localhost:4999
 
 
-Dynamic Strategy Switching
+---
 
-Use in-game signals or chat to change AI behavior mid-game (e.g. attack mode, defense mode, resource-gathering mode).
+4. Install the Tampermonkey Script
+
+1. Install Tampermonkey in your browser
 
 
-AI-vs-AI Competitions
+2. Create a new script and paste in the contents of bloxd_tamper.js
 
-Let two AI teams battle on different servers with isolated decision loops.
+
+3. The script intercepts calls to wss://game.bloxd.io/... and replaces them with ws://localhost:4999
+
+
+
+> ✅ You should now see game traffic flowing through your local proxy.
+
+
+---
+
+5. Load the In-Game Mod Script
+
+In Bloxd's mod editor, paste in bloxd_ollama_client.js.
+
+> This script:
+
+Listens for /ai <command> in player chat
+
+Captures nearby players, blocks, health, and position
+
+Sends a structured JSON request to Ollama via the proxy
+
+Applies actions like go, say, teleport, etc.
+
 
 
 
 
 ---
 
-✅ Final Notes
+🔐 Environment Variables
 
-This system is sandboxed and deterministic: you control the prompt, state, and interpretation.
+You can customize the secret token inside:
 
-Any LLM that supports structured JSON output can be used.
+bloxd_ollama_client.js → OLLAMA_TOKEN
 
-The system was designed for modular expansion with minimal dependencies.
+ollama_controller_server.js → VALID_TOKEN
+
+
+> These must match to allow the AI system to process commands.
+
 
 
 
 ---
 
-> Designed with adaptability in mind. Expand it. Train it. Challenge it. Let your world think for itself.
+💬 Example Usage In-Game
+
+In the Bloxd chat, type:
+
+/ai say hello
+
+Or try:
+
+/ai go north
+/ai attack nearest
+/ai build block at x y z
+
+
+---
+
+✅ Status Indicators
+
+🤖 Thinking... — request is being sent to Ollama
+
+🧭 Moving..., ⚔️ Attacking..., etc. — result of AI action
+
+❌ Error: — request failed or model response was invalid
+
+
+
+---
+
+🛠️ Debugging Tips
+
+Open browser dev console → Network → check WebSocket is connected to ws://localhost:4999
+
+Watch terminal logs in proxy server for AI parsing errors
+
+Ensure Ollama model is correctly downloaded and running
+
+
+---
+
+🌐 Optional Remote Access
+
+If you want to host Ollama remotely:
+
+npm install -g ngrok
+ngrok http 11434
+
+Then update your OLLAMA_URL in the mod script accordingly.
+
+
+---
+
+✨ Future Additions
+
+Rate limiting / abuse protection
+
+Logging and metrics dashboard
+
+Multiplayer-specific coordination logic
+
+Persistent memory across commands
+
+
+
+---
+
+🧠 Powered by Ollama + LLaMA3 + WebSocket Trickery
+
+
+

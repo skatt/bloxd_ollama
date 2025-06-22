@@ -1,20 +1,11 @@
 // bloxd_ollama_client.js
 // --------------------------------------
-// 🧠 AI Controller for Bloxd.io
-//
-// ✅ Requirements:
-// - Ollama controller server must be remotely accessible (e.g. via ngrok)
-// - Ollama backend must be running (ollama serve)
-// - Server must be using matching AUTH_TOKEN
-// - Replace the OLLAMA_URL and OLLAMA_TOKEN below
-//
-// --------------------------------------
+// 🧠 AI Controller for Bloxd.io (WebSocket Proxy Edition)
 
-const OLLAMA_URL = 'https://your-ngrok-url.ngrok.io/chat';
 const OLLAMA_TOKEN = 'your-secret-token';
 
 // 👂 Listen to player chat and delegate AI input
-api.on('playerChat', async (playerId, message) => {
+api.on('playerChat', (playerId, message) => {
   if (!message.startsWith('/ai ')) return;
 
   const playerInput = message.slice(4).trim();
@@ -26,7 +17,6 @@ api.on('playerChat', async (playerId, message) => {
   const playerPos = api.getPosition(playerId);
   const playerHealth = api.getHealth(playerId);
 
-  // Construct nearby context using getPlayerIds and getPosition
   const nearbyPlayers = api.getPlayerIds()
     .filter(id => id !== playerId)
     .map(id => ({
@@ -55,34 +45,37 @@ api.on('playerChat', async (playerId, message) => {
   };
 
   const payload = {
+    type: 'ollama_command',
     token: OLLAMA_TOKEN,
-    instruction: `You are an AI controlling a player in a 3D voxel world. You receive the game state and a command. Respond with an action and args. Use actions like "go", "say", "attack", "teleport", or "build". Output must be valid JSON: { "action": string, "args": object }`.trim(),
+    playerId,
+    instruction: `You are an AI controlling a player in a 3D voxel world. You receive the game state and a command. Respond with an action and args. Use actions like "go", "say", "attack", "teleport", or "build". Output must be valid JSON: { "action": string, "args": object }`,
     message: playerInput,
     state
   };
 
   api.sendMessage(playerId, '🤖 Thinking...');
+  api.sendRaw(JSON.stringify(payload));
+});
 
+// 📩 Handle response from Ollama via proxy WebSocket
+api.on('rawMessage', (msg) => {
+  let data;
   try {
-    const res = await fetch(OLLAMA_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const { action, args } = await res.json();
-    handleOllamaAction(playerId, action, args);
-
-  } catch (err) {
-    api.sendMessage(playerId, '❌ Error: ' + err.message);
+    data = JSON.parse(msg);
+  } catch {
+    return;
   }
+
+  if (data?.type !== 'ollama_response' || !data.playerId) return;
+
+  const { playerId, action, args } = data;
+  handleOllamaAction(playerId, action, args);
 });
 
 // 🔧 Executes Ollama-defined actions
 function handleOllamaAction(playerId, action, args) {
   switch (action) {
-    case 'go':
-      // Convert direction into velocity vector
+    case 'go': {
       const speed = Math.min(args.speed || 1, 10);
       const dir = (args.direction || '').toLowerCase();
       const velocity = { x: 0, y: 0, z: 0 };
@@ -95,6 +88,7 @@ function handleOllamaAction(playerId, action, args) {
       api.applyImpulse(playerId, velocity.x, velocity.y, velocity.z);
       api.sendMessage(playerId, `🧭 Moving ${dir} with speed ${speed}`);
       break;
+    }
 
     case 'say':
       if (args.message) api.sendMessage(playerId, args.message);
@@ -109,7 +103,6 @@ function handleOllamaAction(playerId, action, args) {
 
     case 'attack':
       if (args.targetId) {
-        // Example damage: 10 HP
         api.applyHealthChange(args.targetId, -10, { playerId }, true);
         api.sendMessage(playerId, `⚔️ Attacking ${args.targetId}`);
       }
